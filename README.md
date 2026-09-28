@@ -23,7 +23,7 @@ python scripts/idel_keyvisual.py          # 미리보기 → output/idel_keyvisu
 python scripts/idel_keyvisual.py --full   # 600×1800mm @150dpi → output/idel_keyvisual_full.png / .jpg
 ```
 
-화분 위치·크기, 받침대 높이, 색은 `scripts/idel_keyvisual.py` 상단의 `POTS`, `HORIZON_Y`, `KX`·`KY`(그림자 방향), 팔레트 값으로 조정합니다.
+화분 위치·크기, 벽·바닥 경계, 그림자 방향, 색은 `scripts/idel_keyvisual.py` 상단의 `POTS`, `HORIZON_Y`, `KX`·`KY`(그림자 방향), 팔레트 값으로 조정합니다.
 
 ---
 

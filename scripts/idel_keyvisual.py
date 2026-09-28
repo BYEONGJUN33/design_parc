@@ -3,6 +3,7 @@
 원칙
   - 화분 원본 픽셀은 크기 축소 외에 손대지 않는다 (색·대비·광택·그레인 X).
   - 접지: 화분 실루엣의 바닥 곡선에서 바닥 타원을 직접 계산해 그 아래를 어둡게.
+  - 예외: 밑단의 구멍이 그림자와 붙어 보이지 않도록 바닥 반사광(BOUNCE_TARGET)만 밑단에 살짝.
   - 그림자: 왼쪽에서 들어오는 빛 → 오른쪽 앞으로 떨어지는 선명한 그림자.
 
   python scripts/idel_keyvisual.py            # 미리보기 (25%)
@@ -39,6 +40,7 @@ POTS = [
 
 # ---- light: 왼쪽 위에서 → 그림자는 오른쪽, 살짝 앞으로 ----
 KX, KY = 0.85, -0.16       # 높이 h의 단면이 바닥에 떨어지는 위치 (x + h*KX, y - h*KY)
+BOUNCE_TARGET = 0.21       # 바닥 반사광: 화분 밑단 플라스틱 밝기 목표 (0이면 원본 그대로)
 
 
 def load_pot(rel, cache_dir):
@@ -67,6 +69,22 @@ def load_pot(rel, cache_dir):
     rgb = rgb.copy()
     rgb[edge] = inner[edge]
     return np.dstack([rgb, soft])
+
+
+def defringe(rgba):
+    """가장자리 반투명 픽셀(1~3px)에 섞인 원래 배경색(흰 번짐)을 바로 안쪽 화분 색으로 교체.
+
+    알파가 거의 1인 안쪽 픽셀은 손대지 않는다.
+    """
+    a = rgba[..., 3]
+    opaque = a >= 0.98
+    edge = (a > 0) & ~opaque
+    if not edge.any():
+        return rgba
+    _, (iy, ix) = ndi.distance_transform_edt(~opaque, return_indices=True)
+    out = rgba.copy()
+    out[edge, :3] = rgba[iy[edge], ix[edge], :3]
+    return out
 
 
 def trim(rgba):
@@ -171,21 +189,57 @@ def cast_shadow(H, W, pot, x0, y0, fp):
 
 
 def contact_shadow(H, W, pot, x0, y0, fp):
-    """화분 바닥 외곽선에 딱 붙는 진한 접지 그림자 + 바닥 원 주변의 옅은 앰비언트 그림자."""
+    """화분 바닥 외곽선 바로 밑의 가는 접지선 + 회색 그라데이션 + 바닥 원 주변의 옅은 그림자.
+
+    접지선을 새까맣고 두껍게 깔면 검은 화분 밑단·구멍과 한 덩어리로 붙어 보이므로
+    가장 진한 부분은 머리카락 두께로만 둔다.
+    """
     ph, pw = pot.shape[:2]
     fcx, fcy, frx, fry = fp
-    # 1) 실루엣을 아래로 조금 내린 모양 → 바닥 곡선(발 포함) 바로 밑에만 진하게
-    sil = np.zeros((H, W), np.float32)
-    d = max(1, round(ph * 0.004))
-    ys, ye = max(0, y0 + d), min(H, y0 + d + ph)
-    xs, xe = max(0, x0), min(W, x0 + pw)
-    sil[ys:ye, xs:xe] = pot[ys - y0 - d: ye - y0 - d, xs - x0: xe - x0, 3]
-    sil[: int(y0 + fcy)] = 0                       # 바닥 원 중심보다 위(화분 몸통)는 제외
-    tight = ndi.gaussian_filter(sil, max(0.8, ph * 0.004))
-    # 2) 바닥 원 주변 옅은 그림자 (화분 폭 안쪽으로 제한)
+
+    def shifted_silhouette(d):
+        sil = np.zeros((H, W), np.float32)
+        ys, ye = max(0, y0 + d), min(H, y0 + d + ph)
+        xs, xe = max(0, x0), min(W, x0 + pw)
+        sil[ys:ye, xs:xe] = pot[ys - y0 - d: ye - y0 - d, xs - x0: xe - x0, 3]
+        sil[: int(y0 + fcy)] = 0                   # 바닥 원 중심보다 위(화분 몸통)는 제외
+        return sil
+
+    # 1) 가는 접지선 (실루엣을 아주 조금 내린 모양)
+    hair = ndi.gaussian_filter(shifted_silhouette(max(1, round(ph * 0.0008))), max(0.6, ph * 0.001))
+    # 2) 그 아래로 번지는 회색 그라데이션
+    soft = ndi.gaussian_filter(shifted_silhouette(max(1, round(ph * 0.006))), max(1.0, ph * 0.006))
+    # 3) 바닥 원 주변 옅은 그림자 (화분 폭 안쪽으로 제한)
     wide = ellipse_mask(H, W, x0 + fcx, y0 + fcy + fry * 0.15, frx * 0.98, fry * 1.25)
     wide = ndi.gaussian_filter(wide, max(1.0, pw * 0.02))
-    return np.clip(0.95 * tight + 0.30 * wide, 0, 1)
+    return np.clip(0.80 * hair + 0.35 * soft + 0.30 * wide, 0, 1)
+
+
+def floor_bounce(pot, target):
+    """흰 바닥에서 올라오는 반사광: 화분 밑단 플라스틱만 살짝 밝게.
+
+    밝기를 곱하는 방식이라 원래 어두운 구멍은 거의 그대로 → 구멍과 테두리의 대비가 살아난다.
+    화분마다 플라스틱 밝기가 달라서, 밑단 밝기가 target에 오도록 세기를 자동으로 정한다.
+    밑단에서 위로 갈수록 빠르게 사라지며, 화분의 나머지 부분은 원본 그대로.
+    """
+    if target <= 0:
+        return pot
+    rgb, a = pot[..., :3], pot[..., 3]
+    ph, pw = a.shape
+    solid = a > 0.5
+    lum = rgb @ np.array([0.299, 0.587, 0.114], np.float32)
+    band = solid.copy()
+    band[: int(ph * 0.85)] = False
+    strength = float(np.clip(target / max(1e-3, np.median(lum[band])) - 1, 0, 1.8))
+    has = solid.any(0)
+    bottom = np.where(has, ph - 1 - np.argmax(solid[::-1], 0), 0)
+    dist = np.clip(bottom[None, :] - np.arange(ph)[:, None], 0, None).astype(np.float32)
+    lift = strength * np.exp(-dist / (0.06 * ph)) * has[None, :]
+    # 원래 밝던 가장자리 하이라이트가 과하게 증폭되지 않도록 목표 밝기 근처에서 상한
+    mult = 1 + lift
+    cap = np.maximum(1.0, (target * 1.15) / np.maximum(lum, 1e-3))
+    mult = np.minimum(mult, cap)
+    return np.dstack([np.clip(rgb * mult[..., None], 0, 1), a])
 
 
 def main():
@@ -202,7 +256,7 @@ def main():
 
     placed = []
     for rel, cx, by, wf in POTS:
-        src = trim(load_pot(rel, cache))
+        src = trim(defringe(load_pot(rel, cache)))
         # 원본보다 크게 배치하면 뭉개지므로 금지 (인쇄 해상도 기준 검사)
         if round(FULL_W * wf) > src.shape[1]:
             raise SystemExit(f"{rel}: 원본 {src.shape[1]}px < 배치 {round(FULL_W * wf)}px — 가로폭을 줄이세요")
@@ -218,14 +272,14 @@ def main():
         np.maximum(sh, cast_shadow(H, W, pot, x0, y0, fp), out=sh)
     img *= 1 - 0.85 * sh[..., None] * (1 - SHADOW)
 
-    # 2) 뒤에서부터: 접지 그림자 → 화분 원본
+    # 2) 뒤에서부터: 접지 그림자 → 화분 (밑단 반사광 외엔 원본)
     for pot, x0, y0, fp in placed:
         ph, pw = pot.shape[:2]
         c = contact_shadow(H, W, pot, x0, y0, fp)
         img *= 1 - c[..., None] * (1 - SHADOW * 0.55)
         ys, ye = max(0, y0), min(H, y0 + ph)
         xs, xe = max(0, x0), min(W, x0 + pw)
-        p = pot[ys - y0: ye - y0, xs - x0: xe - x0]
+        p = floor_bounce(pot, BOUNCE_TARGET)[ys - y0: ye - y0, xs - x0: xe - x0]
         a = p[..., 3:4]
         img[ys:ye, xs:xe] = p[..., :3] * a + img[ys:ye, xs:xe] * (1 - a)
 

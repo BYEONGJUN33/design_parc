@@ -26,6 +26,18 @@ python scripts/idel_keyvisual.py --full   # 600×1800mm @150dpi → output/idel_
 
 화분 위치·크기, 벽·바닥 경계, 그림자 방향, 색은 `scripts/idel_keyvisual.py` 상단의 `POTS`, `HORIZON_Y`, `KX`·`KY`(그림자 방향), 팔레트 값으로 조정합니다.
 
+### 구조 레이아웃 (600×1800mm)
+
+```bash
+python scripts/layout_guide.py
+```
+
+- `output/layout_wireframe.png`: 구역 설계도 (mm 눈금)
+- `output/layout_overlay.png`: 키비주얼 위에 구역 겹쳐 보기
+- `output/layout_guide.png`: 투명 가이드 레이어 (Canva·미리캔버스에서 맨 위에 겹쳐 두고 작업, 완성 후 삭제)
+
+구역 위치는 `scripts/layout_guide.py`의 `ZONES`에서 조정합니다.
+
 ---
 
 ## 리서치 메모

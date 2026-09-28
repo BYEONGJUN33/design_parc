@@ -8,7 +8,22 @@ AI가 새로 만든 레이아웃 대신, **사람이 직접 만든 공개 템플
 | 폴더 | 내용 |
 |---|---|
 | `assets/` | 작업 소스 (누끼 딴 이미지, 참고 사진, 로고 등) |
+| `scripts/` | 합성 스크립트 |
+| `output/` | 결과물 (미리보기·인쇄용) |
 | `fonts/` | [Pretendard](https://github.com/orioncactus/pretendard) 한글 폰트 (SIL OFL, 상업적 사용 무료) |
+
+## IDeL 세로 현수막 키비주얼
+
+참고 사진(`assets/Idel_Pots_reference`)의 스튜디오 스틸라이프 스타일로 누끼 화분을 합성합니다.
+세로 줄무늬 벽 + 석고 질감 받침대 + 오른쪽 뒤에서 들어오는 햇빛과 앞으로 떨어지는 그림자.
+
+```bash
+pip install -r scripts/requirements.txt
+python scripts/idel_keyvisual.py          # 미리보기 → output/idel_keyvisual_preview.jpg
+python scripts/idel_keyvisual.py --full   # 600×1800mm @150dpi → output/idel_keyvisual_full.png / .jpg
+```
+
+화분 위치·크기, 받침대 높이, 색은 `scripts/idel_keyvisual.py` 상단의 `POTS`, `PLINTH_*`, 팔레트 값으로 조정합니다.
 
 ---
 

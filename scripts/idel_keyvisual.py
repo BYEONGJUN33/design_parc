@@ -1,7 +1,9 @@
-"""IDeL 세로 현수막 키비주얼 합성.
+"""IDeL 세로 현수막 키비주얼 합성 (참고: 불가리 스틸라이프 — 밝은 회백색 스튜디오).
 
-참고 사진(assets/Idel_Pots_reference) 스타일:
-  세로 줄무늬 벽 + 질감 있는 받침대 + 한쪽에서 들어오는 강한 햇빛과 긴 그림자.
+원칙
+  - 화분 원본 픽셀은 크기 축소 외에 손대지 않는다 (색·대비·광택·그레인 X).
+  - 접지: 화분 실루엣의 바닥 곡선에서 바닥 타원을 직접 계산해 그 아래를 어둡게.
+  - 그림자: 왼쪽에서 들어오는 빛 → 오른쪽 앞으로 떨어지는 선명한 그림자.
 
   python scripts/idel_keyvisual.py            # 미리보기 (25%)
   python scripts/idel_keyvisual.py --full     # 600x1800mm @150dpi (3543x10630)
@@ -19,68 +21,51 @@ OUT = ROOT / "output"
 
 FULL_W, FULL_H = 3543, 10630  # 600 x 1800 mm @ 150 dpi
 
-# ---- palette (참고 사진 1의 따뜻한 베이지/샌드 톤) ----
-WALL = np.array([0.93, 0.87, 0.77])
-PLINTH_TOP = np.array([0.80, 0.64, 0.47])
-PLINTH_FACE = np.array([0.55, 0.37, 0.24])
-SHADOW = np.array([0.50, 0.44, 0.40])   # 그림자 부분에 곱할 값 (살짝 따뜻한 톤)
-LIGHT = np.array([1.00, 0.93, 0.80])    # 햇빛 색
+# ---- palette: 참고 사진 2 (차가운 회백색) ----
+WALL_TOP = np.array([0.80, 0.82, 0.85])
+WALL_BOTTOM = np.array([0.90, 0.91, 0.92])
+FLOOR_BACK = np.array([0.95, 0.95, 0.96])
+FLOOR_FRONT = np.array([0.88, 0.89, 0.90])
+SHADOW = np.array([0.50, 0.53, 0.58])      # 그림자에 곱하는 값 (살짝 푸른 회색)
 
-# ---- layout (비율, 0~1) ----
-PLINTH_TOP_Y = 0.560   # 벽과 받침대 윗면이 만나는 선
-PLINTH_EDGE_Y = 0.745  # 받침대 윗면과 앞면이 만나는 모서리
-LIGHT_DIR = -1          # -1: 빛이 오른쪽에서 → 그림자는 왼쪽 앞으로
-
-# (파일, 가로 중심 x, 바닥 y, 가로폭) — 뒤에 있는 것부터
+# ---- layout (비율 0~1) ----
+HORIZON_Y = 0.560          # 벽과 바닥이 만나는 선
+# (파일, 가로 중심 x, 바닥 가장 아랫점 y, 가로폭) — 뒤에 있는 것부터
 POTS = [
-    ("Container with top handle/Still life/Container with top handle - front.png", 0.30, 0.618, 0.44),
-    ("Etna/Still life/Etna - front.jpeg", 0.79, 0.636, 0.33),
-    ("Marsili/Still life/Marsili - front.png", 0.60, 0.700, 0.44),
+    ("Etna/Still life/Etna - front.jpeg", 0.74, 0.640, 0.30),
+    ("Container with top handle/Still life/Container with top handle - front.png", 0.28, 0.660, 0.40),
+    ("Marsili/Still life/Marsili - front.png", 0.52, 0.745, 0.42),
 ]
 
-
-def fbm(h, w, rng, scales, weights):
-    """부드러운 노이즈 (석고/모래 질감용)."""
-    out = np.zeros((h, w), np.float32)
-    for s, wt in zip(scales, weights):
-        n = rng.standard_normal((max(2, h // s), max(2, w // s))).astype(np.float32)
-        n = ndi.zoom(n, (h / n.shape[0], w / n.shape[1]), order=1)[:h, :w]
-        out += wt * n
-    return out
+# ---- light: 왼쪽 위에서 → 그림자는 오른쪽, 살짝 앞으로 ----
+KX, KY = 0.85, -0.16       # 높이 h의 단면이 바닥에 떨어지는 위치 (x + h*KX, y - h*KY)
 
 
 def load_pot(rel, cache_dir):
     path = SRC / rel
     im = Image.open(path)
-    if im.mode in ("RGBA", "LA", "P") and "A" in im.convert("RGBA").getbands():
+    if im.mode != "RGB":
         rgba = np.asarray(im.convert("RGBA")).astype(np.float32) / 255
         if rgba[..., 3].min() < 0.5:
             return rgba
-    # 흰 배경 사진 → rembg로 누끼
+    # 흰 배경 사진 → 누끼 (마스크만 새로 만들고 색은 원본 그대로)
     cached = cache_dir / (path.stem + "_cut.png")
     if not cached.exists():
         from rembg import new_session, remove
         cut = remove(Image.open(path).convert("RGB"), session=new_session("isnet-general-use"))
         cut.save(cached)
-    rgba = np.asarray(Image.open(cached).convert("RGBA")).astype(np.float32) / 255
-    return rgba
-
-
-def clean_alpha(rgba):
-    """반투명 누끼 정리: 채우고, 가장자리만 살짝 부드럽게, 흰 테두리 제거."""
-    a = rgba[..., 3]
+    rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.float32) / 255
+    a = np.asarray(Image.open(cached).convert("RGBA"))[..., 3].astype(np.float32) / 255
     solid = ndi.binary_fill_holes(a > 0.5)
-    solid = ndi.binary_opening(solid, iterations=2)
     lab, n = ndi.label(solid)
     if n > 1:
-        sizes = ndi.sum(solid, lab, range(1, n + 1))
-        solid = lab == (1 + int(np.argmax(sizes)))
-    soft = ndi.gaussian_filter(solid.astype(np.float32), 1.0)
-    rgb = rgba[..., :3].copy()
-    # 가장자리의 밝은 배경색 번짐(흰 테두리) → 안쪽 색으로 교체
-    edge = (soft > 0.01) & ~ndi.binary_erosion(solid, iterations=3)
-    inner = ndi.grey_erosion(rgb.max(-1), size=7)
-    rgb[edge] = np.minimum(rgb[edge], inner[edge, None])
+        solid = lab == (1 + int(np.argmax(ndi.sum(solid, lab, range(1, n + 1)))))
+    # 가장자리 1~2px만: 흰 배경이 섞인 픽셀을 바로 안쪽 색으로 (흰 테두리 방지)
+    soft = np.clip(ndi.gaussian_filter(solid.astype(np.float32), 0.7), 0, 1)
+    inner = ndi.grey_erosion(rgb, size=(5, 5, 1))
+    edge = (soft > 0) & (soft < 1)
+    rgb = rgb.copy()
+    rgb[edge] = inner[edge]
     return np.dstack([rgb, soft])
 
 
@@ -91,146 +76,116 @@ def trim(rgba):
 
 def resize(rgba, w):
     h = round(rgba.shape[0] * w / rgba.shape[1])
-    im = Image.fromarray((np.clip(rgba, 0, 1) * 255).astype(np.uint8), "RGBA")
+    im = Image.fromarray((np.clip(rgba, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
     return np.asarray(im.resize((w, h), Image.LANCZOS)).astype(np.float32) / 255
+
+
+def footprint(a):
+    """실루엣 바닥 곡선에서 바닥 원 (cx, cy, rx, ry) — 화분 이미지 좌표.
+
+    가운데에서 바깥으로 가며 바닥 외곽선의 기울기가 급해지는 지점(= 옆면이 시작되는 곳)을
+    바닥 원의 양 끝으로 본다. rx = 양 끝 사이 반폭, cy = 양 끝 높이, ry = 가장 아랫점 - cy.
+    """
+    solid = a > 0.5
+    h, w = solid.shape
+    has = solid.any(0)
+    bottom = np.where(has, h - 1 - np.argmax(solid[::-1], 0), 0).astype(np.float32)
+    # 받침 발 사이 홈은 무시: 아래쪽 외곽선만 + 살짝 매끄럽게
+    bottom = ndi.maximum_filter1d(bottom, size=max(3, w // 12))
+    bottom = ndi.uniform_filter1d(bottom, size=max(3, w // 40))
+    base = bottom.max()
+    xs = np.nonzero(has)[0]
+    cx = int((xs.min() + xs.max()) / 2)
+    slope = np.abs(np.gradient(bottom))
+
+    def end(direction):
+        x = cx
+        while 0 < x < w - 1 and slope[x] < 1.5:
+            x += direction
+        return x
+
+    xl, xr = end(-1), end(+1)
+    rx = (xr - xl) / 2
+    cy = (bottom[xl] + bottom[xr]) / 2
+    return (xl + xr) / 2, float(cy), float(rx), float(max(2.0, base - cy))
+
+
+def ellipse_mask(H, W, cx, cy, rx, ry):
+    m = np.zeros((H, W), np.float32)
+    y0, y1 = max(0, int(cy - ry)), min(H, int(cy + ry) + 2)
+    x0, x1 = max(0, int(cx - rx)), min(W, int(cx + rx) + 2)
+    if y0 < y1 and x0 < x1:
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        m[y0:y1, x0:x1] = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1
+    return m
 
 
 def build_background(W, H, rng):
     img = np.zeros((H, W, 3), np.float32)
-    yt, ye = int(H * PLINTH_TOP_Y), int(H * PLINTH_EDGE_Y)
-
-    # 벽: 세로 립(반원통) 패턴
-    period = max(6, round(W / 30))
-    x = np.arange(W)
-    ph = (x % period) / period
-    rib = 0.93 + 0.07 * np.sin(np.pi * ph) ** 0.6          # 립 둥근 면
-    rib -= 0.05 * np.exp(-((ph - 0.0) ** 2) / 0.0015)       # 홈
-    rib += 0.03 * np.clip(np.sin(2 * np.pi * ph + LIGHT_DIR * 1.2), 0, 1)  # 빛 받는 쪽
-    yy = np.linspace(0, 1, yt)[:, None]
-    xx = np.linspace(0, 1, W)[None, :]
-    light = 0.86 + 0.16 * (1 - yy) * (0.6 + 0.4 * (xx if LIGHT_DIR < 0 else 1 - xx))
-    light *= 1 - 0.10 * np.clip((yy - 0.75) / 0.25, 0, 1)   # 바닥 근처 살짝 어둡게
-    wall = rib[None, :] * light
-    img[:yt] = wall[..., None] * WALL
-
-    # 받침대: 석고/샌드 질감을 높이맵으로 만들고 햇빛 방향으로 음영
-    def stucco(h, w, fine):
-        hm = fbm(h, w, rng, [max(1, W // 1800), max(2, W // 700), max(3, W // 200)], [1.0, 0.6, 0.35])
-        hm += fine * np.clip(rng.standard_normal((h, w)).astype(np.float32), -2, 2)
-        hm = ndi.gaussian_filter(hm, max(0.6, W / 2500))
-        gx, gy = np.gradient(hm)
-        relief = 1 + 0.9 * (LIGHT_DIR * -gx * 0.7 - gy * 0.7)  # 오른쪽 위에서 빛
-        return np.clip(relief, 0.75, 1.25), hm
-
-    th = ye - yt
-    relief, hm = stucco(th, W, 0.25)
-    t = np.linspace(0, 1, th)[:, None, None]
-    top = PLINTH_TOP * (1.0 + 0.04 * t) * (1 + 0.35 * (relief[..., None] - 1)) * (1 + 0.015 * hm[..., None])
-    img[yt:ye] = top
-
-    fh = H - ye
-    relief, hm = stucco(fh, W, 0.5)
-    t = np.linspace(0, 1, fh)[:, None, None]
-    face = PLINTH_FACE * (1.0 - 0.12 * t) * relief[..., None] * (1 + 0.02 * hm[..., None])
-    img[ye:] = face
-
-    # 벽과 바닥이 만나는 곳 살짝 어둡게 (앰비언트 오클루전)
-    ao = max(2, H // 250)
-    img[yt - ao: yt] *= np.linspace(1.0, 0.88, ao)[:, None, None]
-    img[yt: yt + ao] *= np.linspace(0.85, 1.0, ao)[:, None, None]
-
-    # 모서리 하이라이트
-    e = max(2, H // 1500)
-    img[ye - e: ye] = np.clip(img[ye - e: ye] * 1.12, 0, 1)
+    hy = int(H * HORIZON_Y)
+    # 벽: 위는 어둡고 아래로 밝아짐 + 왼쪽 위에서 들어오는 부드러운 빛줄기
+    t = np.linspace(0, 1, hy)[:, None, None]
+    wall = WALL_TOP * (1 - t) + WALL_BOTTOM * t
+    yy, xx = np.mgrid[0:hy, 0:W].astype(np.float32)
+    beam = np.exp(-(((xx / W) * 0.9 + (yy / H) * 1.6 - 0.25) ** 2) / 0.02)
+    img[:hy] = wall * (1 + 0.10 * beam[..., None])
+    # 바닥: 벽 쪽은 밝고 앞으로 올수록 살짝 어두움
+    fh = H - hy
+    t = np.linspace(0, 1, fh)[:, None, None] ** 0.8
+    img[hy:] = FLOOR_BACK * (1 - t) + FLOOR_FRONT * t
+    # 벽과 바닥 경계를 살짝 부드럽게
+    b = max(2, H // 800)
+    img[hy - 4 * b: hy + 4 * b] = ndi.gaussian_filter1d(img[hy - 4 * b: hy + 4 * b], b, axis=0)
+    # 인쇄 시 계조 끊김 방지용 미세 노이즈 (배경에만)
+    img += rng.normal(0, 0.004, (H, W, 1)).astype(np.float32)
     return img
 
 
-def cast_shadow(H, W, pot, x0, y0, base_y):
-    """바닥에 눕는 긴 그림자 (햇빛이 오른쪽 뒤, 낮은 각도에서 들어온다고 가정).
-
-    화분을 가로 단면(원)들의 묶음으로 보고, 높이 h의 단면은 바닥의
-    (중심x - h*KX, base - h*KY) 위치에 타원 그림자를 만든다.
-    KY < 0 이면 그림자가 앞(보는 사람 쪽)으로 떨어진다.
-    """
-    KX, KY = 0.95, -0.11
-    FORESHORTEN = 0.16                 # 바닥 원이 화면에서 납작해 보이는 비율
+def cast_shadow(H, W, pot, x0, y0, fp):
+    """화분을 가로 단면(타원)들의 묶음으로 보고 각 단면의 그림자를 바닥에 찍는다."""
     ph, pw = pot.shape[:2]
+    fcx, fcy, frx, fry = fp
+    ratio = fry / max(1.0, frx)            # 이 화분 사진의 원근(바닥 타원 납작함)
     solid = pot[..., 3] > 0.5
     cols = np.arange(pw)
+    base_row = fcy                          # 바닥 타원 중심 높이가 그림자의 시작점
     canvas = np.zeros((H, W), np.float32)
-    step = max(1, ph // 160)
-    for row in range(ph - 1, -1, -step):
+    step = max(1, ph // 200)
+    for row in range(int(base_row), -1, -step):
         xs = cols[solid[row]]
         if xs.size == 0:
             continue
-        h = ph - 1 - row
-        cx = x0 + (xs[0] + xs[-1]) / 2 + LIGHT_DIR * h * KX
-        cy = base_y - h * KY
-        rx = (xs[-1] - xs[0]) / 2
-        ry = max(1.0, rx * FORESHORTEN)
-        y_lo, y_hi = max(0, int(cy - ry)), min(H, int(cy + ry) + 1)
-        x_lo, x_hi = max(0, int(cx - rx)), min(W, int(cx + rx) + 1)
-        if y_lo >= y_hi or x_lo >= x_hi:
-            continue
-        yy, xx = np.ogrid[y_lo:y_hi, x_lo:x_hi]
-        inside = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1
-        # 멀수록 옅게 (거리 정보는 따로 저장해 흐림 정도에 사용)
-        val = inside * (1 - 0.35 * h / ph)
-        canvas[y_lo:y_hi, x_lo:x_hi] = np.maximum(canvas[y_lo:y_hi, x_lo:x_hi], val)
-
-    # 화분에서 멀수록 흐리게 (반그림자): 가로 거리 기준으로 두 흐림을 섞음
-    near = ndi.gaussian_filter(canvas, max(0.8, pw * 0.004))
-    far = ndi.gaussian_filter(canvas, max(1.0, pw * 0.018))
-    dist = np.abs(np.arange(W)[None, :] - (x0 + pw / 2)) / max(1, ph * KX)
-    ramp = np.clip(dist, 0, 1)
-    out = near * (1 - ramp) + far * ramp
-    out[int(H * PLINTH_EDGE_Y):] = 0   # 모서리 넘어가는 부분은 그늘진 앞면에 묻힘
+        h = base_row - row
+        rx = max(1.0, (xs[-1] - xs[0]) / 2)
+        cx = x0 + (xs[0] + xs[-1]) / 2 + h * KX
+        cy = y0 + fcy - h * KY
+        np.maximum(canvas, ellipse_mask(H, W, cx, cy, rx, max(1.0, rx * ratio)), out=canvas)
+    # 가까운 곳은 선명, 멀어질수록 흐리고 옅게
+    near = ndi.gaussian_filter(canvas, max(0.8, pw * 0.003))
+    far = ndi.gaussian_filter(canvas, max(1.0, pw * 0.02))
+    dist = np.clip((np.arange(W)[None, :] - (x0 + fcx)) / max(1.0, ph * KX), 0, 1)
+    out = near * (1 - dist) + far * dist
+    out *= 1 - 0.35 * dist
+    out[: int(H * HORIZON_Y)] = 0
     return out
 
 
-def shade_pot(pot):
-    """검은 플라스틱에 햇빛 방향 하이라이트와 따뜻한 반사광."""
-    rgb, a = pot[..., :3], pot[..., 3]
-    h, w = a.shape
-    # 원본마다 다른 색 틀어짐(초록/파랑 기) 제거 → 중립 검정으로 통일
-    lum = (rgb @ np.array([0.299, 0.587, 0.114], np.float32))[..., None]
-    rgb = lum + 0.15 * (rgb - lum)
-    # 대비 살짝 올려 입체감
-    rgb = np.clip((rgb - 0.02) * 1.15, 0, 1)
-    xx = np.linspace(0, 1, w)[None, :]
-    lit = xx if LIGHT_DIR < 0 else 1 - xx
-    grad = (lit ** 2.2)[..., None]
-    rgb = rgb * (0.92 + 0.10 * grad)
-    rgb = 1 - (1 - rgb) * (1 - 0.10 * grad * LIGHT)        # screen
-    # 원통 하이라이트: 행마다 화분 폭 안에서의 위치(u)로 세로 광택 띠
-    solid = a > 0.5
-    idx = np.arange(w)[None, :]
-    left = np.where(solid.any(1), np.argmax(solid, 1), 0)[:, None]
-    right = np.where(solid.any(1), w - 1 - np.argmax(solid[:, ::-1], 1), 1)[:, None]
-    u = np.clip((idx - left) / np.maximum(1, right - left), 0, 1)
-    if LIGHT_DIR > 0:
-        u = 1 - u
-    band = 0.16 * np.exp(-((u - 0.80) ** 2) / 0.006) + 0.05 * np.exp(-((u - 0.30) ** 2) / 0.02)
-    rgb = 1 - (1 - rgb) * (1 - band[..., None] * LIGHT)
-    # 빛 쪽 가장자리 림라이트
-    inside = ndi.binary_erosion(a > 0.5, iterations=max(2, w // 250))
-    rim = ndi.gaussian_filter((a > 0.5).astype(np.float32) - inside, max(1, w / 400))
-    rim *= lit
-    rgb = 1 - (1 - rgb) * (1 - 0.35 * rim[..., None] * LIGHT)
-    # 바닥 쪽은 받침대 색이 살짝 반사
-    yy = np.linspace(0, 1, h)[:, None, None]
-    rgb = rgb + 0.05 * np.clip((yy - 0.75) / 0.25, 0, 1) * PLINTH_TOP
-    return np.dstack([np.clip(rgb, 0, 1), a])
-
-
-def composite(img, pot, x0, y0):
-    H, W = img.shape[:2]
+def contact_shadow(H, W, pot, x0, y0, fp):
+    """화분 바닥 외곽선에 딱 붙는 진한 접지 그림자 + 바닥 원 주변의 옅은 앰비언트 그림자."""
     ph, pw = pot.shape[:2]
-    ys, ye = max(0, y0), min(H, y0 + ph)
+    fcx, fcy, frx, fry = fp
+    # 1) 실루엣을 아래로 조금 내린 모양 → 바닥 곡선(발 포함) 바로 밑에만 진하게
+    sil = np.zeros((H, W), np.float32)
+    d = max(1, round(ph * 0.004))
+    ys, ye = max(0, y0 + d), min(H, y0 + d + ph)
     xs, xe = max(0, x0), min(W, x0 + pw)
-    p = pot[ys - y0: ye - y0, xs - x0: xe - x0]
-    a = p[..., 3:4]
-    img[ys:ye, xs:xe] = p[..., :3] * a + img[ys:ye, xs:xe] * (1 - a)
+    sil[ys:ye, xs:xe] = pot[ys - y0 - d: ye - y0 - d, xs - x0: xe - x0, 3]
+    sil[: int(y0 + fcy)] = 0                       # 바닥 원 중심보다 위(화분 몸통)는 제외
+    tight = ndi.gaussian_filter(sil, max(0.8, ph * 0.004))
+    # 2) 바닥 원 주변 옅은 그림자 (화분 폭 안쪽으로 제한)
+    wide = ellipse_mask(H, W, x0 + fcx, y0 + fcy + fry * 0.15, frx * 0.98, fry * 1.25)
+    wide = ndi.gaussian_filter(wide, max(1.0, pw * 0.02))
+    return np.clip(0.95 * tight + 0.30 * wide, 0, 1)
 
 
 def main():
@@ -247,43 +202,39 @@ def main():
 
     placed = []
     for rel, cx, by, wf in POTS:
-        pot = trim(clean_alpha(load_pot(rel, cache)))
-        pot = resize(pot, round(W * wf))
-        ph, pw = pot.shape[:2]
-        # 화분 바닥의 투명한 발 부분 보정: 알파가 있는 마지막 행이 바닥
-        x0 = round(W * cx - pw / 2)
-        base = round(H * by)
-        y0 = base - ph
-        placed.append((pot, x0, y0, base))
+        src = trim(load_pot(rel, cache))
+        # 원본보다 크게 배치하면 뭉개지므로 금지 (인쇄 해상도 기준 검사)
+        if round(FULL_W * wf) > src.shape[1]:
+            raise SystemExit(f"{rel}: 원본 {src.shape[1]}px < 배치 {round(FULL_W * wf)}px — 가로폭을 줄이세요")
+        pot = resize(src, round(W * wf))
+        fp = footprint(pot[..., 3])
+        x0 = round(W * cx - fp[0])
+        y0 = round(H * by - (fp[1] + fp[3]))
+        placed.append((pot, x0, y0, fp))
 
-    # 1) 모든 그림자 먼저 (서로 겹쳐도 한 번만 어둡게)
+    # 1) 긴 그림자 (모두 합쳐 한 번만 어둡게)
     sh = np.zeros((H, W), np.float32)
-    for pot, x0, y0, base in placed:
-        sh = np.maximum(sh, cast_shadow(H, W, pot, x0, y0, base))
-    img = img * (1 - sh[..., None] * (1 - SHADOW))
+    for pot, x0, y0, fp in placed:
+        np.maximum(sh, cast_shadow(H, W, pot, x0, y0, fp), out=sh)
+    img *= 1 - 0.85 * sh[..., None] * (1 - SHADOW)
 
-    # 2) 뒤에서부터 화분 + 접지 그림자
-    for pot, x0, y0, base in placed:
+    # 2) 뒤에서부터: 접지 그림자 → 화분 원본
+    for pot, x0, y0, fp in placed:
         ph, pw = pot.shape[:2]
-        contact = np.zeros((H, W), np.float32)
-        cy, rx, ry = base - max(1, ph // 120), pw * 0.47, max(2, ph * 0.018)
-        yy, xx = np.ogrid[:H, :W]
-        contact[((xx - (x0 + pw / 2)) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1] = 1
-        contact = ndi.gaussian_filter(contact, max(1, ph * 0.012))
-        img *= (1 - 0.6 * contact[..., None])
-        composite(img, shade_pot(pot), x0, y0)
+        c = contact_shadow(H, W, pot, x0, y0, fp)
+        img *= 1 - c[..., None] * (1 - SHADOW * 0.55)
+        ys, ye = max(0, y0), min(H, y0 + ph)
+        xs, xe = max(0, x0), min(W, x0 + pw)
+        p = pot[ys - y0: ye - y0, xs - x0: xe - x0]
+        a = p[..., 3:4]
+        img[ys:ye, xs:xe] = p[..., :3] * a + img[ys:ye, xs:xe] * (1 - a)
 
-    # 3) 전체 톤: 따뜻한 햇빛 그레이딩 + 필름 그레인
-    img = np.clip(img, 0, 1) ** 0.97
-    img = img * np.array([1.01, 1.0, 0.97])
-    img += rng.normal(0, 0.012, img.shape[:2])[..., None].astype(np.float32)
-    out = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
-
+    out = Image.fromarray((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
     OUT.mkdir(exist_ok=True)
     name = "idel_keyvisual_full" if args.full else "idel_keyvisual_preview"
     if args.full:
         out.save(OUT / f"{name}.png", dpi=(150, 150))
-    out.save(OUT / f"{name}.jpg", quality=92, dpi=(150, 150))
+    out.save(OUT / f"{name}.jpg", quality=95, subsampling=0, dpi=(150, 150))
     print("saved", OUT / name, out.size)
 
 

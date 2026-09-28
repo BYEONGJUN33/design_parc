@@ -14,8 +14,8 @@ AI가 새로 만든 레이아웃 대신, **사람이 직접 만든 공개 템플
 
 ## IDeL 세로 현수막 키비주얼
 
-참고 사진(`assets/Idel_Pots_reference`)의 스튜디오 스틸라이프 스타일로 누끼 화분을 합성합니다.
-세로 줄무늬 벽 + 석고 질감 받침대 + 오른쪽 뒤에서 들어오는 햇빛과 앞으로 떨어지는 그림자.
+참고 사진(`assets/Idel_Pots_reference`)의 불가리 스틸라이프(밝은 회백색 스튜디오) 스타일로 누끼 화분을 합성합니다.
+화분 원본 픽셀은 크기 축소 외에 손대지 않고, 바닥 곡선에 맞춘 접지 그림자와 왼쪽 빛의 긴 그림자만 더합니다.
 
 ```bash
 pip install -r scripts/requirements.txt
@@ -23,7 +23,7 @@ python scripts/idel_keyvisual.py          # 미리보기 → output/idel_keyvisu
 python scripts/idel_keyvisual.py --full   # 600×1800mm @150dpi → output/idel_keyvisual_full.png / .jpg
 ```
 
-화분 위치·크기, 받침대 높이, 색은 `scripts/idel_keyvisual.py` 상단의 `POTS`, `PLINTH_*`, 팔레트 값으로 조정합니다.
+화분 위치·크기, 받침대 높이, 색은 `scripts/idel_keyvisual.py` 상단의 `POTS`, `HORIZON_Y`, `KX`·`KY`(그림자 방향), 팔레트 값으로 조정합니다.
 
 ---
 

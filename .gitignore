@@ -2,3 +2,4 @@ node_modules/
 out/
 output/cache/
 output/*_full.png
+__pycache__/

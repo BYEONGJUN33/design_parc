@@ -89,8 +89,8 @@ def build(variant):
     d = ImageDraw.Draw(im)
     y0, y1 = int(H * 0.815), int(H * 0.925)
     d.rectangle((0, y0, W, y1), fill=BAND)
-    d.text((cx, y0 + (y1 - y0) * 0.30), "3톤 지게차에도", font=f("ExtraBold", 132), fill=(255, 255, 255), anchor="mm")
-    d.text((cx, y0 + (y1 - y0) * 0.70), "파손 ZERO", font=f("Black", 196), fill=(90, 200, 130), anchor="mm")
+    d.text((cx, y0 + (y1 - y0) * 0.30), "파손, 물고임, 변형", font=f("ExtraBold", 132), fill=(255, 255, 255), anchor="mm")
+    d.text((cx, y0 + (y1 - y0) * 0.70), "걱정 ZERO", font=f("Black", 196), fill=(90, 200, 130), anchor="mm")
 
     og = Image.open(ROOT / "assets/drafts/draft_v4.jpg").convert("RGB")
     s = og.width / 600

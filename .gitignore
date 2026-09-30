@@ -4,3 +4,4 @@ output/cache/
 output/*_full.png
 __pycache__/
 output/bg_*.png
+output/*_full*.png

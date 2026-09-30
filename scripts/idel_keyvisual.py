@@ -40,6 +40,11 @@ POTS = [
 
 # ---- light: 왼쪽 위에서 → 그림자는 오른쪽, 살짝 앞으로 ----
 KX, KY = 0.85, -0.16       # 높이 h의 단면이 바닥에 떨어지는 위치 (x + h*KX, y - h*KY)
+# 그림자 방향 프리셋 (화면 기준: 위 = 북 = 벽 쪽)
+SHADOW_DIRS = {
+    "se": (0.85, -0.16),   # 오른쪽 앞 (기본, 왼쪽 뒤에서 빛)
+    "ne": (0.80, 0.16),    # 오른쪽 뒤 (왼쪽 앞에서 빛)
+}
 BOUNCE_TARGET = 0.21       # 바닥 반사광: 화분 밑단 플라스틱 밝기 목표 (0이면 원본 그대로)
 
 
@@ -245,7 +250,10 @@ def floor_bounce(pot, target):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--full", action="store_true")
+    ap.add_argument("--shadow", choices=sorted(SHADOW_DIRS), default="se", help="그림자 방향")
     args = ap.parse_args()
+    global KX, KY
+    KX, KY = SHADOW_DIRS[args.shadow]
     scale = 1.0 if args.full else 0.25
     W, H = round(FULL_W * scale), round(FULL_H * scale)
     rng = np.random.default_rng(7)
@@ -286,6 +294,8 @@ def main():
     out = Image.fromarray((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
     OUT.mkdir(exist_ok=True)
     name = "idel_keyvisual_full" if args.full else "idel_keyvisual_preview"
+    if args.shadow != "se":
+        name += f"_{args.shadow}"
     if args.full:
         out.save(OUT / f"{name}.png", dpi=(150, 150))
     out.save(OUT / f"{name}.jpg", quality=95, subsampling=0, dpi=(150, 150))

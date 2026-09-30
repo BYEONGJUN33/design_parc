@@ -38,6 +38,16 @@ python scripts/layout_guide.py
 
 구역 위치는 `scripts/layout_guide.py`의 `ZONES`에서 조정합니다.
 
+### 빈 배경 (600×1800mm @150dpi)
+
+```bash
+python scripts/plain_background.py
+```
+
+- `output/bg_plain.jpg`: 무지 그라데이션 + 왼쪽 위 은은한 빛 (설명형 배너용)
+- `output/bg_studio_empty.jpg`: 키비주얼과 같은 벽·바닥 스튜디오 (화분 없이)
+- PNG 원본(약 29MB)은 스크립트로 다시 만들 수 있어 저장소에서 제외
+
 ---
 
 ## 리서치 메모
